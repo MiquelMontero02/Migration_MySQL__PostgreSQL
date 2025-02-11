@@ -1,0 +1,118 @@
+
+/*VISTA DONDE SE CONSULTAN EL NUMERO DE ALUMNOS POR ASSIGNATURA EN CADA CENTRO*/
+CREATE MATERIALIZED VIEW prod.ALU_X_ASSIGN AS(
+SELECT 
+    M.ASSIGNATURA,
+    M.CENTRE,
+    COUNT(DISTINCT M.ESTUDIANT) AS NUM_ESTUDIANTS
+FROM 
+    prod.MATRICULA M
+GROUP BY 
+    M.ASSIGNATURA,M.CENTRE);
+
+/*VISTA DONDE SE CONSULTAN EL NUMERO DE ALUMNOS POR TIPO DE ENSENYAMIENTO EN CADA CENTRO*/
+CREATE MATERIALIZED VIEW prod.ALU_CENTRE_TE AS(
+SELECT 
+    M.CENTRE,
+    M.TIPO_ENSNY, 
+    COUNT(DISTINCT M.ESTUDIANT) AS NUM_ESTUDIANTS
+FROM 
+    prod.MATRICULA M
+GROUP BY 
+    M.CENTRE,M.TIPO_ENSNY);
+
+/*VISTA DONDE SE CONSULTAN EL NUMERO DE ALUMNOS TOTALES EN CADA CENTRO*/
+CREATE MATERIALIZED VIEW prod.ALU_X_CENTRE AS (
+SELECT 
+    M.CENTRE,
+    COUNT(DISTINCT M.ESTUDIANT) AS NUM_ESTUDIANTS
+FROM 
+    prod.MATRICULA M
+GROUP BY 
+    M.CENTRE
+ORDER BY NUM_ESTUDIANTS DESC
+);
+
+/*VISTA DONDE SE CONSULTAN EL NUMERO DE ALUMNOS SIN MATRICULA*/
+CREATE MATERIALIZED VIEW prod.ALU_NO_MATR AS 
+SELECT 
+    E.DNI AS DNI,
+    E.NOM AS NOM,
+    E.COGNOM AS COGNOM,
+    E.MUNICIPI AS MUNICIPI
+FROM
+    PROD.ESTUDIANT E 
+LEFT JOIN
+    PROD.MATRICULA M ON E.DNI=M.ESTUDIANT
+WHERE M.ESTUDIANT IS NULL
+GROUP BY E.DNI;
+
+/*Quins centres tenen usuaris matriculats a assignatures de Formació
+Professional, i quina quantitat?*/
+SELECT
+    M.CENTRE AS CENTRE,
+    M.NUM_ESTUDIANTS
+FROM
+    PROD.ALU_CENTRE_TE M
+WHERE M.TIPO_ENSNY='FP';
+
+/*Mostreu els centres més saturats. Demostreu-ho amb dades. Per saturació
+s’entén com el cúmul d’estudiants que van al centre.*/
+
+EXPLAIN ANALYZE SELECT
+    M.CENTRE AS CENTRE,
+    M.NUM_ESTUDIANTS AS MATRICULATS
+FROM
+    prod.ALU_X_CENTRE M
+ORDER BY MATRICULATS DESC;
+
+
+/*Quines assignatures tenen menys de 4 usuaris matriculats? Extreure també les
+dades del centre on es dóna l’assignatura.*/
+
+/*VISTA MATERIALITZADA PARTICIONADA PER Nº DE ESTUDIANTS*/
+
+EXPLAIN ANALYZE SELECT 
+    AXA.ASSIGNATURA AS ASSIGNATURA,
+    AXA.CENTRE AS CENTRE,
+    C.NOM_CENTRE AS NOM_CENTRE
+FROM
+    prod.ALU_X_ASSIGN AXA
+JOIN
+    prod.CENTRE C ON AXA.NUM_ESTUDIANTS<4 AND C.ID=AXA.CENTRE;
+
+/*Quins estudiants no estan matriculats a cap assignatura?*/
+
+EXPLAIN ANALYZE SELECT 
+    *
+FROM 
+    prod.ALU_NO_MATR ANM;
+
+/*Basant-t’he amb la sentència anterior, extreure el número total.*/
+
+SELECT 
+    COUNT(ANM.DNI) AS N_ALUMNES_SENSE_MATRICUA
+FROM 
+    prod.ALU_NO_MATR ANM;
+
+/*En quin centre hauria d’anar cada un dels estudiants que no estan matriculats?
+La premisa es basarà en la proximitat del centre al lloc de residència de
+l’estudiant*/
+with centre_alu as(
+SELECT
+    max(C.ID) AS CODI_CENTRE,
+    max(concat(anm.nom,' ',anm.COGNOM)) as nom_estudaint,
+    ANM.DNI AS ALUMNE
+FROM
+    PROD.ALU_NO_MATR ANM
+JOIN
+    PROD.MUNICIPI M ON ANM.MUNICIPI=M.ID
+JOIN 
+    PROD.R_MUNICIPI_LOCALITAT RML ON RML.MUNICIPI=M.ID
+JOIN 
+    PROD.ADRECA A ON A.LOCALITAT=RML.LOCALITAT
+JOIN
+    PROD.CENTRE C ON A.CENTRE=C.ID
+group by ALUMNE)
+
+select c.nom_centre,ca.nom_estudaint,ca.ALUMNE from centre_alu ca join prod.centre c on c.id=ca.CODI_CENTRE;

@@ -1,0 +1,156 @@
+CREATE VIEW MAIL_LIST AS 
+SELECT 
+    SUBSTRING_INDEX(C1.EMAIL_LIST, ',', 1) AS CORREU,
+    C1.CODI AS CENTRE 
+FROM 
+    RAW_IMPORT.CENTRE C1
+WHERE C1.EMAIL_LIST LIKE '%,%'
+UNION ALL
+SELECT 
+    SUBSTRING(SUBSTRING_INDEX(C2.EMAIL_LIST, ',', -1),2),
+    C2.CODI AS CENTRE 
+FROM 
+    RAW_IMPORT.CENTRE C2 
+WHERE C2.EMAIL_LIST LIKE '%,%'
+UNION
+SELECT 
+    C3.EMAIL AS CORREU,
+    C3.CODI AS CENTRE
+FROM 
+    RAW_IMPORT.CENTRE C3;
+
+ /*VW_ADREC_LOCALITAT:   Vista donde se almacenan todos las direcciones, junto al centro y la localidad 
+                        presentes tanto en el campo ADREC, dividiendo aquellas que presentaban
+                        varias direcciones en el mismo campo*/
+USE GESTMAT;
+
+CREATE VIEW VW_ADREC_LOCALITAT AS
+WITH carrers_multiples AS (
+    SELECT 
+        C1.ADREC AS ADREC,
+        C1.LOCALITAT AS LOCALITAT,
+        C1.CODI AS CENTRE
+    FROM RAW_IMPORT.CENTRE C1
+    WHERE C1.ADREC REGEXP '^[^/]+/[^/]+/[^/]+.*$' AND ADREC NOT LIKE '%S/N%'
+    OR C1.ADREC REGEXP '_'
+    OR C1.ADREC REGEXP ':'
+    OR C1.ADREC REGEXP '(?:.*CTRA.*CTRA.*)'
+),
+carrer_restant AS (
+SELECT 
+    C2.ADREC AS ADREC,
+    C2.LOCALITAT AS LOCALITAT,
+    C2.CODI AS CENTRE
+FROM RAW_IMPORT.CENTRE C2
+WHERE CHAR_LENGTH(C2.ADREC) > 70
+AND C2.ADREC NOT IN (SELECT ADREC FROM carrers_multiples)
+AND C2.ADREC NOT LIKE '%S/N%'
+),
+llista_completa AS(
+    SELECT CM.ADREC AS ADREC,
+    CM.LOCALITAT AS LOCALITAT,
+    CM.CENTRE AS CENTRE
+    FROM carrers_multiples CM
+
+    UNION
+
+    SELECT 
+        CR.ADREC AS ADREC,
+        CR.LOCALITAT AS LOCALITAT,
+        CR.CENTRE AS CENTRE
+    FROM carrer_restant CR
+),
+primer_carrer AS(
+    SELECT
+        CASE
+            WHEN LC1.ADREC LIKE "%: %" THEN CONCAT(SUBSTRING_INDEX(LC1.ADREC,": ",1),"1.2")
+            WHEN LC1.ADREC LIKE "%1.2 /%" THEN SUBSTRING_INDEX(LC1.ADREC,"1.2 /",1)
+            WHEN LC1.ADREC LIKE "%5/%" THEN CONCAT(SUBSTRING_INDEX(LC1.ADREC,"5/ ",1),"5")
+            WHEN LC1.ADREC LIKE "%BAIXOS/%" THEN CONCAT(SUBSTRING_INDEX(LC1.ADREC,"S/ ",1),"S")
+            WHEN LC1.ADREC LIKE "% - %" THEN SUBSTRING_INDEX(LC1.ADREC," - ",1)
+            WHEN LC1.ADREC LIKE "% i %" THEN SUBSTRING_INDEX(LC1.ADREC," i ",1)
+            WHEN LC1.ADREC LIKE "%_%" THEN SUBSTRING_INDEX(LC1.ADREC,"_",1)        
+        END AS PRIMERA_parte,
+        LC1.LOCALITAT AS LOCALITAT,
+        LC1.CENTRE AS CENTRE
+    FROM llista_completa LC1
+),
+segon_carrer AS(
+   SELECT
+     CASE
+        WHEN LC2.ADREC LIKE "%: %" THEN SUBSTRING_INDEX(LC2.ADREC,": ",-1)
+        WHEN LC2.ADREC LIKE "%1.2 /%" THEN SUBSTRING_INDEX(LC2.ADREC,"1.2 /",-1)
+        WHEN LC2.ADREC LIKE "%5/%" THEN SUBSTRING_INDEX(SUBSTRING_INDEX(LC2.ADREC,"/ J",1),"5/ ",-1)
+        WHEN LC2.ADREC LIKE "%BAIXOS/%" THEN SUBSTRING_INDEX(LC2.ADREC,"S/ ",-1)
+        WHEN LC2.ADREC LIKE "% - %" THEN SUBSTRING_INDEX(LC2.ADREC," - ",-1)
+        WHEN LC2.ADREC LIKE "% i %" THEN SUBSTRING_INDEX(LC2.ADREC," i ",-1)
+        WHEN LC2.ADREC LIKE "%_%" THEN SUBSTRING_INDEX(LC2.ADREC,"_",-1)        
+    END AS SEGONA_PART,
+    LC2.LOCALITAT AS LOCALITAT,
+    LC2.CENTRE AS CENTRE
+    FROM llista_completa LC2
+),
+tercer_carrer AS (
+    SELECT
+    CASE
+        WHEN LC3.ADREC LIKE "%5/%" THEN CONCAT("J",SUBSTRING_INDEX(SUBSTRING_INDEX(LC3.ADREC,"/ J",-1),"5/ ",-1))
+    END AS TERCERA_PART,
+    LC3.LOCALITAT AS LOCALITAT,
+    LC3.CENTRE AS CENTRE
+    FROM llista_completa LC3
+
+),
+result AS (
+    SELECT 
+        PC.PRIMERA_parte as ADREC,
+        PC.LOCALITAT AS LOCALITAT,
+        PC.CENTRE AS CENTRE
+    FROM primer_carrer PC
+    
+    UNION
+
+    SELECT 
+        SC.SEGONA_PART AS ADREC,
+        SC.LOCALITAT AS LOCALITAT,
+        SC.CENTRE AS CENTRE
+    FROM segon_carrer SC
+
+    UNION 
+    SELECT
+        TERCERA_PART AS ADREC,
+        TC.LOCALITAT AS LOCALITAT,
+        TC.CENTRE AS CENTRE
+    FROM tercer_carrer TC
+    
+),
+adrec_list AS (
+    SELECT
+        C.ADREC,
+        (SELECT
+            L.ID
+        FROM GESTMAT.LOCALITAT L
+        WHERE L.NOM=LOCALITAT
+        ) AS LOCALITAT,
+        C.CODI AS CENTRE
+    FROM 
+        RAW_IMPORT.CENTRE C
+    WHERE ADREC NOT IN (
+        SELECT 
+            ADREC 
+        FROM llista_completa
+        )
+    UNION 
+    SELECT 
+        R.ADREC,
+            (SELECT
+            L.ID
+        FROM GESTMAT.LOCALITAT L
+        WHERE L.NOM=LOCALITAT
+        ) AS LOCALITAT,
+        R.CENTRE AS CENTRE
+    FROM 
+    result R
+    WHERE R.ADREC IS NOT NULL
+)
+select ADREC,CENTRE,LOCALITAT from adrec_list GROUP BY ADREC,CENTRE,LOCALITAT;
+
